@@ -1,0 +1,3 @@
+[submodule "zephyr-scale-mcp"]
+	path = zephyr-scale-mcp
+	url = https://github.com/metquay/zephyr-scale-mcp.git
