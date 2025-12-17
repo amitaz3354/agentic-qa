@@ -1,0 +1,398 @@
+---
+description: Best practices for creating Domain Specific Language (DSL) layers in Playwright tests using decorators only, one DSL class per test suite
+globs: **/*dsl*.ts,**/*dsl*.js,**/dsl/**/*
+alwaysApply: false
+---
+
+# Playwright DSL Layer
+
+## Core Principles
+
+Each test suite has **one DSL class** that handles all business flows for that domain. DSL methods use **decorators only** (no functional callbacks). Methods can combine multiple pages to achieve business objectives.
+
+### Key Requirements
+
+1. **One DSL Per Test Suite** - Each test suite has exactly one DSL class
+2. **Business-Focused Class Name** - DSL class name reflects the business domain (e.g., `ECommerceDSL`, `UserManagementDSL`)
+3. **Decorators Only** - All methods use `@step` decorator, no functional callbacks
+4. **Multi-Page Methods** - Methods can use multiple pages to complete business workflows
+5. **Assertions in DSL** - All assertions belong in DSL methods using web-first assertions
+6. **Use Page Object Locators** - DSL must use locators from page objects, never direct `page.getByRole()` or `page.getByTestId()` calls
+7. **No Implementation Details** - DSL only calls page object methods and uses page object locators, never Playwright API directly
+8. **Dependency Injection** - Page objects injected via constructor
+
+## Step Decorator Implementation
+
+Use this decorator implementation. All DSL methods must use it with descriptive titles for better test reporting:
+
+```typescript
+import { test } from '@playwright/test';
+
+export function step(title?: string) {
+  return function (target: Function, context: ClassMethodDecoratorContext) {
+    return function replacementMethod(...args: any) {
+      // Use provided title, or generate from class and method name
+      const stepTitle = title || `${this.constructor.name}.${context.name as string}`;
+      return test.step(stepTitle, async () => {
+        return await target.call(this, ...args);
+      }, { box: true });
+    };
+  };
+}
+```
+
+**Usage with titles:**
+
+```typescript
+// ✅ Good: Use descriptive titles for better reporting
+export class HomepageDSL {
+  @step('Click Discover What We Deliver link')
+  async clickDiscoverWhatWeDeliver() {
+    await this.homepagePage.clickDiscoverWhatWeDeliver();
+  }
+
+  @step('Verify What We Deliver section content')
+  async verifyWhatWeDeliverSection() {
+    await expect(this.homepagePage.threeWaysTitle).toBeVisible();
+    // ... more assertions
+  }
+}
+
+// ✅ Good: Title auto-generated from class and method name if not provided
+export class ECommerceDSL {
+  @step  // Will use "ECommerceDSL.loginAsCustomer" as title
+  async loginAsCustomer(credentials: { email: string; password: string }) {
+    // ...
+  }
+}
+```
+
+## One DSL Class Per Test Suite
+
+Each test suite has one DSL class that handles all business flows for that domain:
+
+```typescript
+// ✅ Good: One DSL class per test suite
+// dsl/ecommerce-dsl.ts - E-commerce test suite DSL
+import { Page } from '@playwright/test';
+import { expect } from '@playwright/test';
+
+export class ECommerceDSL {
+  constructor(
+    private page: Page,
+    private loginPage: LoginPage,
+    private productPage: ProductPage,
+    private cartPage: CartPage,
+    private checkoutPage: CheckoutPage
+  ) {}
+
+  @step
+  async loginAsCustomer(credentials: { email: string; password: string }) {
+    await this.loginPage.fillEmail(credentials.email);
+    await this.loginPage.fillPassword(credentials.password);
+    await this.loginPage.submit();
+    
+    // Assertions in DSL using page object locators
+    await expect(this.loginPage.dashboardLocator).toBeVisible();
+  }
+
+  @step
+  async addProductToCart(productId: string) {
+    await this.productPage.selectProduct(productId);
+    await this.productPage.addToCart();
+  }
+
+  @step
+  async completePurchaseFlow(flowData: {
+    credentials: { email: string; password: string };
+    productId: string;
+    shippingAddress: Address;
+  }) {
+    // Business workflow using multiple pages
+    await this.loginAsCustomer(flowData.credentials);
+    await this.addProductToCart(flowData.productId);
+    await this.cartPage.proceedToCheckout();
+    await this.checkoutPage.fillShippingInfo(flowData.shippingAddress);
+    await this.checkoutPage.submitOrder();
+  }
+}
+
+// ❌ Bad: Multiple DSL classes for one test suite
+class LoginDSL { /* ... */ }
+class ProductDSL { /* ... */ }
+class CartDSL { /* ... */ }
+
+// ❌ Bad: Functional callbacks instead of decorators
+export async function loginAsCustomer(/* ... */) {
+  return await withStep('Login', async () => { /* ... */ }); // ❌ No functional callbacks
+}
+```
+
+## Business-Focused Class Names
+
+DSL class name reflects the business domain and test suite:
+
+```typescript
+// ✅ Good: Business-focused class names
+export class ECommerceDSL { /* ... */ }        // For e-commerce test suite
+export class UserManagementDSL { /* ... */ }   // For user management test suite
+export class PaymentProcessingDSL { /* ... */ } // For payment test suite
+
+// ❌ Bad: Technical or page-focused names
+export class LoginDSL { /* ... */ }            // ❌ Page-focused
+export class ProductDSL { /* ... */ }          // ❌ Page-focused
+export class TestDSL { /* ... */ }             // ❌ Too generic
+```
+
+## Methods Can Use Multiple Pages
+
+DSL methods can combine multiple pages to complete business workflows:
+
+```typescript
+// ✅ Good: Method uses multiple pages
+export class ECommerceDSL {
+  constructor(
+    private loginPage: LoginPage,
+    private productPage: ProductPage,
+    private cartPage: CartPage,
+    private checkoutPage: CheckoutPage
+  ) {}
+
+  @step
+  async completePurchaseFlow(flowData: {
+    credentials: { email: string; password: string };
+    productId: string;
+    shippingAddress: Address;
+  }) {
+    // Uses multiple pages for one business flow
+    await this.loginPage.fillEmail(flowData.credentials.email);
+    await this.loginPage.fillPassword(flowData.credentials.password);
+    await this.loginPage.submit();
+    
+    await this.productPage.selectProduct(flowData.productId);
+    await this.productPage.addToCart();
+    
+    await this.cartPage.proceedToCheckout();
+    
+    await this.checkoutPage.fillShippingInfo(flowData.shippingAddress);
+    await this.checkoutPage.submitOrder();
+  }
+}
+```
+
+## Decorators Only
+
+All methods must use the `@step` decorator. No functional callbacks:
+
+```typescript
+// ✅ Good: Decorator only
+export class ECommerceDSL {
+  @step
+  async loginAsCustomer(credentials: { email: string; password: string }) {
+    await this.loginPage.fillEmail(credentials.email);
+    await this.loginPage.fillPassword(credentials.password);
+    await this.loginPage.submit();
+  }
+}
+
+// ❌ Bad: Functional callback
+export class ECommerceDSL {
+  async loginAsCustomer(credentials: { email: string; password: string }) {
+    return await withStep('Login', async () => { // ❌ No functional callbacks
+      // ...
+    });
+  }
+}
+```
+
+## Assertions in DSL
+
+All assertions belong in DSL methods using Playwright's web-first assertions:
+
+```typescript
+// ✅ Good: Assertions in DSL methods
+import { expect } from '@playwright/test';
+
+export class ECommerceDSL {
+  constructor(
+    private page: Page,
+    private loginPage: LoginPage,
+    private productPage: ProductPage
+  ) {}
+
+  @step
+  async loginAsCustomer(credentials: { email: string; password: string }) {
+    await this.loginPage.fillEmail(credentials.email);
+    await this.loginPage.fillPassword(credentials.password);
+    await this.loginPage.submit();
+    
+    // Assertions in DSL using page object locators
+    await expect(this.loginPage.dashboardLocator).toBeVisible();
+    await expect(this.loginPage.welcomeMessageLocator).toContainText('Welcome');
+  }
+
+  @step
+  async addProductToCart(productId: string) {
+    await this.productPage.selectProduct(productId);
+    await this.productPage.addToCart();
+    
+    // Assertions in DSL using page object locators
+    await expect(this.productPage.cartBadgeLocator).toHaveText('1');
+  }
+}
+```
+
+## No Implementation Details
+
+DSL methods only call page object methods, never Playwright API directly:
+
+```typescript
+// ✅ Good: DSL only uses page object methods
+export class ECommerceDSL {
+  @step
+  async addProductToCart(productId: string) {
+    await this.productPage.selectProduct(productId);
+    await this.productPage.addToCart();
+  }
+}
+
+// ❌ Bad: DSL uses Playwright API directly
+export class ECommerceDSL {
+  constructor(private page: Page) {}
+
+  @step
+  async addProductToCart(productId: string) {
+    await this.page.getByTestId(`product-${productId}`).click(); // ❌ Direct Playwright usage
+  }
+}
+
+// ❌ Bad: DSL uses direct page calls instead of page object locators
+export class ECommerceDSL {
+  @step
+  async verifyDashboard() {
+    await expect(this.page.getByTestId('dashboard')).toBeVisible(); // ❌ Should use this.loginPage.dashboardLocator
+  }
+}
+```
+
+## Complete Example
+
+```typescript
+// step-decorator.ts
+import { test } from '@playwright/test';
+
+export function step(title?: string) {
+  return function (target: Function, context: ClassMethodDecoratorContext) {
+    return function replacementMethod(...args: any) {
+      // Use provided title, or generate from class and method name
+      const stepTitle = title || `${this.constructor.name}.${context.name as string}`;
+      return test.step(stepTitle, async () => {
+        return await target.call(this, ...args);
+      }, { box: true });
+    };
+  };
+}
+
+// dsl/ecommerce-dsl.ts - One DSL for e-commerce test suite
+import { Page } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { step } from '../step-decorator';
+import { LoginPage } from '../pages/login-page';
+import { ProductPage } from '../pages/product-page';
+import { CartPage } from '../pages/cart-page';
+import { CheckoutPage } from '../pages/checkout-page';
+
+export class ECommerceDSL {
+  constructor(
+    private page: Page,
+    private loginPage: LoginPage,
+    private productPage: ProductPage,
+    private cartPage: CartPage,
+    private checkoutPage: CheckoutPage
+  ) {}
+
+  @step('Login as customer')
+  async loginAsCustomer(credentials: { email: string; password: string }) {
+    await this.loginPage.fillEmail(credentials.email);
+    await this.loginPage.fillPassword(credentials.password);
+    await this.loginPage.submit();
+    
+    // Assertions in DSL using page object locators
+    await expect(this.loginPage.dashboardLocator).toBeVisible();
+  }
+
+  @step('Add product to cart')
+  async addProductToCart(productId: string) {
+    await this.productPage.selectProduct(productId);
+    await this.productPage.addToCart();
+    
+    // Assertions in DSL using page object locators
+    await expect(this.productPage.cartBadgeLocator).toHaveText('1');
+  }
+
+  @step('Complete purchase flow')
+  async completePurchaseFlow(flowData: {
+    credentials: { email: string; password: string };
+    productId: string;
+    shippingAddress: Address;
+  }) {
+    await this.loginAsCustomer(flowData.credentials);
+    await this.addProductToCart(flowData.productId);
+    await this.cartPage.proceedToCheckout();
+    await this.checkoutPage.fillShippingInfo(flowData.shippingAddress);
+    await this.checkoutPage.submitOrder();
+    
+    // Assertions in DSL using page object locators
+    await expect(this.checkoutPage.orderConfirmationLocator).toBeVisible();
+    await expect(this.checkoutPage.orderNumberLocator).toContainText(/ORD-\d+/);
+  }
+}
+
+// dsl/user-management-dsl.ts - One DSL for user management test suite
+import { Page } from '@playwright/test';
+import { expect } from '@playwright/test';
+
+export class UserManagementDSL {
+  constructor(
+    private page: Page,
+    private registrationPage: RegistrationPage,
+    private loginPage: LoginPage,
+    private profilePage: ProfilePage
+  ) {}
+
+  @step('Create user account')
+  async createUserAccount(userData: { email: string; password: string; name: string }) {
+    await this.registrationPage.fillEmail(userData.email);
+    await this.registrationPage.fillPassword(userData.password);
+    await this.registrationPage.fillName(userData.name);
+    await this.registrationPage.submit();
+    
+    // Assertions in DSL using page object locators
+    await expect(this.registrationPage.accountCreatedLocator).toBeVisible();
+  }
+
+  @step('Update user profile')
+  async updateUserProfile(profileData: { firstName: string; lastName: string }) {
+    await this.profilePage.fillFirstName(profileData.firstName);
+    await this.profilePage.fillLastName(profileData.lastName);
+    await this.profilePage.save();
+    
+    // Assertions in DSL using page object locators
+    await expect(this.profilePage.profileUpdatedLocator).toBeVisible();
+  }
+}
+```
+
+## Rules Summary
+
+1. ✅ **One DSL Per Test Suite** - Each test suite has exactly one DSL class
+2. ✅ **Business-Focused Name** - Class name reflects business domain (e.g., `ECommerceDSL`)
+3. ✅ **Decorators Only** - All methods use `@step` decorator, no functional callbacks
+4. ✅ **Multi-Page Methods** - Methods can use multiple pages for business workflows
+5. ✅ **Assertions in DSL** - All assertions belong in DSL methods using web-first assertions
+6. ✅ **No Implementation Details** - Only call page object methods, never Playwright API directly
+7. ✅ **Dependency Injection** - Page objects and Page instance injected via constructor
+
+## References
+
+- [Playwright Test Step Documentation](https://playwright.dev/docs/api/class-test#test-step)

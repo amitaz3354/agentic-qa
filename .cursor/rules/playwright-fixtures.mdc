@@ -1,0 +1,327 @@
+---
+description: Best practices for creating Playwright fixtures with page factory pattern for dependency injection
+globs: **/*fixture*.ts,**/*fixture*.js,**/fixtures/**/*
+alwaysApply: false
+---
+
+# Playwright Fixtures
+
+## Core Principles
+
+Fixtures provide page objects to tests via dependency injection. All page object instantiation must go through a **Page Factory** pattern to centralize creation logic and make supported pages explicit.
+
+### Key Requirements
+
+1. **Registry Pattern** - Page factory uses a registry mapping page names to page classes
+2. **Single Create Method** - One `createPage(pageName)` method instead of many individual methods
+3. **Explicit Page Support** - Registry makes it clear which pages are available
+4. **Fixture-Based Injection** - Page objects provided via Playwright fixtures
+5. **No DSL in Fixtures** - Fixtures only provide page objects, not DSL instances
+6. **Centralized Creation** - Single place to manage page object instantiation
+
+## Page Factory Pattern
+
+Create a factory class with a **registry pattern** that maps page names to page classes. Use a single `createPage()` method instead of individual methods for each page:
+
+```typescript
+// ✅ Good: Page factory with registry pattern
+import { Page } from '@playwright/test';
+import { LoginPage } from '../pages/login-page';
+import { HomePage } from '../pages/home-page';
+import { ProductPage } from '../pages/product-page';
+import { CartPage } from '../pages/cart-page';
+import { BasePage } from '../pages/base-page';
+
+type PageClass = new (page: Page) => BasePage;
+type PageName = 'login' | 'home' | 'product' | 'cart';
+
+export class PageFactory {
+  private readonly pageRegistry: Record<PageName, PageClass> = {
+    login: LoginPage,
+    home: HomePage,
+    product: ProductPage,
+    cart: CartPage,
+  };
+
+  constructor(private page: Page) {}
+
+  createPage<T extends BasePage>(pageName: PageName): T {
+    const PageClass = this.pageRegistry[pageName];
+    if (!PageClass) {
+      throw new Error(`Page "${pageName}" is not registered in the factory`);
+    }
+    return new PageClass(this.page) as T;
+  }
+}
+
+// ❌ Bad: Individual methods for each page
+export class PageFactory {
+  createLoginPage(): LoginPage { /* ... */ }
+  createHomePage(): HomePage { /* ... */ }
+  createProductPage(): ProductPage { /* ... */ }
+  // ❌ Too many methods, harder to maintain
+}
+
+// ❌ Bad: Direct instantiation without factory
+export const test = base.extend({
+  loginPage: async ({ page }, use) => {
+    await use(new LoginPage(page)); // ❌ Direct instantiation
+  },
+});
+```
+
+## Fixture Setup
+
+Fixtures use the page factory's single `createPage()` method with page names:
+
+```typescript
+// ✅ Good: Fixtures use factory registry pattern
+import { test as base } from '@playwright/test';
+import { PageFactory } from './page-factory';
+import { LoginPage } from './pages/login-page';
+import { HomePage } from './pages/home-page';
+import { ProductPage } from './pages/product-page';
+import { CartPage } from './pages/cart-page';
+
+type TestFixtures = {
+  pageFactory: PageFactory;
+  loginPage: LoginPage;
+  homePage: HomePage;
+  productPage: ProductPage;
+  cartPage: CartPage;
+};
+
+export const test = base.extend<TestFixtures>({
+  pageFactory: async ({ page }, use) => {
+    await use(new PageFactory(page));
+  },
+
+  loginPage: async ({ pageFactory }, use) => {
+    await use(pageFactory.createPage<LoginPage>('login'));
+  },
+
+  homePage: async ({ pageFactory }, use) => {
+    await use(pageFactory.createPage<HomePage>('home'));
+  },
+
+  productPage: async ({ pageFactory }, use) => {
+    await use(pageFactory.createPage<ProductPage>('product'));
+  },
+
+  cartPage: async ({ pageFactory }, use) => {
+    await use(pageFactory.createPage<CartPage>('cart'));
+  },
+});
+```
+
+## Benefits of Registry Pattern
+
+### Explicit Page Support
+
+The registry makes it immediately clear which pages are available:
+
+```typescript
+// ✅ Good: Clear registry of supported pages
+export class PageFactory {
+  private readonly pageRegistry: Record<PageName, PageClass> = {
+    login: LoginPage,
+    home: HomePage,
+    product: ProductPage,
+    cart: CartPage,
+    // All supported pages in one place
+  };
+}
+
+// ❌ Bad: Individual methods hide the full picture
+export class PageFactory {
+  createLoginPage(): LoginPage { /* ... */ }
+  createHomePage(): HomePage { /* ... */ }
+  // Hard to see all pages at a glance
+}
+```
+
+### Easy to Maintain
+
+Single method instead of many individual methods:
+
+```typescript
+// ✅ Good: One method handles all pages
+export class PageFactory {
+  createPage<T extends BasePage>(pageName: PageName): T {
+    const PageClass = this.pageRegistry[pageName];
+    return new PageClass(this.page) as T;
+  }
+}
+
+// ❌ Bad: One method per page
+export class PageFactory {
+  createLoginPage(): LoginPage { /* ... */ }
+  createHomePage(): HomePage { /* ... */ }
+  createProductPage(): ProductPage { /* ... */ }
+  createCartPage(): CartPage { /* ... */ }
+  // ❌ Too many methods, harder to maintain
+}
+```
+
+### Easy to Extend
+
+Adding new pages is simple - just add to the registry:
+
+```typescript
+// ✅ Good: Adding new page is just adding to registry
+import { CheckoutPage } from '../pages/checkout-page';
+
+export class PageFactory {
+  private readonly pageRegistry: Record<PageName, PageClass> = {
+    login: LoginPage,
+    home: HomePage,
+    product: ProductPage,
+    cart: CartPage,
+    checkout: CheckoutPage, // ✅ Just add to registry
+  };
+}
+
+// Then add to fixtures
+export const test = base.extend<TestFixtures>({
+  // ... existing fixtures
+
+  checkoutPage: async ({ pageFactory }, use) => {
+    await use(pageFactory.createPage<CheckoutPage>('checkout'));
+  },
+});
+```
+
+## Fixtures Do Not Provide DSL
+
+Fixtures only provide page objects. DSL instances are created in test files:
+
+```typescript
+// ✅ Good: Fixtures only provide page objects using registry
+export const test = base.extend<TestFixtures>({
+  loginPage: async ({ pageFactory }, use) => {
+    await use(pageFactory.createPage<LoginPage>('login'));
+  },
+  homePage: async ({ pageFactory }, use) => {
+    await use(pageFactory.createPage<HomePage>('home'));
+  },
+  // No DSL fixtures
+});
+
+// Test file creates DSL
+test('example', async ({ loginPage, homePage }) => {
+  const userDSL = new UserDSL(loginPage, homePage); // Created in test
+  await userDSL.loginAsUser('user@example.com', 'password123');
+});
+
+// ❌ Bad: DSL as fixture
+export const test = base.extend<TestFixtures>({
+  userDSL: async ({ loginPage, homePage }, use) => { // ❌ DSL should not be fixture
+    await use(new UserDSL(loginPage, homePage));
+  },
+});
+```
+
+## Complete Example
+
+```typescript
+// page-factory.ts
+import { Page } from '@playwright/test';
+import { LoginPage } from '../pages/login-page';
+import { HomePage } from '../pages/home-page';
+import { ProductPage } from '../pages/product-page';
+import { CartPage } from '../pages/cart-page';
+import { BasePage } from '../pages/base-page';
+
+type PageClass = new (page: Page) => BasePage;
+type PageName = 'login' | 'home' | 'product' | 'cart';
+
+export class PageFactory {
+  private readonly pageRegistry: Record<PageName, PageClass> = {
+    login: LoginPage,
+    home: HomePage,
+    product: ProductPage,
+    cart: CartPage,
+  };
+
+  constructor(private page: Page) {}
+
+  createPage<T extends BasePage>(pageName: PageName): T {
+    const PageClass = this.pageRegistry[pageName];
+    if (!PageClass) {
+      throw new Error(`Page "${pageName}" is not registered in the factory. Available pages: ${Object.keys(this.pageRegistry).join(', ')}`);
+    }
+    return new PageClass(this.page) as T;
+  }
+
+  // Optional: Get list of available page names
+  getAvailablePages(): PageName[] {
+    return Object.keys(this.pageRegistry) as PageName[];
+  }
+}
+
+// fixtures/test-fixtures.ts
+import { test as base } from '@playwright/test';
+import { PageFactory } from './page-factory';
+import { LoginPage } from '../pages/login-page';
+import { HomePage } from '../pages/home-page';
+import { ProductPage } from '../pages/product-page';
+import { CartPage } from '../pages/cart-page';
+
+type TestFixtures = {
+  pageFactory: PageFactory;
+  loginPage: LoginPage;
+  homePage: HomePage;
+  productPage: ProductPage;
+  cartPage: CartPage;
+};
+
+export const test = base.extend<TestFixtures>({
+  pageFactory: async ({ page }, use) => {
+    await use(new PageFactory(page));
+  },
+
+  loginPage: async ({ pageFactory }, use) => {
+    await use(pageFactory.createPage<LoginPage>('login'));
+  },
+
+  homePage: async ({ pageFactory }, use) => {
+    await use(pageFactory.createPage<HomePage>('home'));
+  },
+
+  productPage: async ({ pageFactory }, use) => {
+    await use(pageFactory.createPage<ProductPage>('product'));
+  },
+
+  cartPage: async ({ pageFactory }, use) => {
+    await use(pageFactory.createPage<CartPage>('cart'));
+  },
+});
+
+// Test file usage
+import { test } from './fixtures/test-fixtures';
+import { ECommerceDSL } from './dsl/ecommerce-dsl';
+
+test('customer can purchase', async ({ loginPage, productPage, cartPage }) => {
+  const ecommerceDSL = new ECommerceDSL(loginPage, productPage, cartPage);
+  await ecommerceDSL.completePurchaseFlow(
+    'customer@example.com',
+    'password123',
+    'product-123'
+  );
+});
+```
+
+## Rules Summary
+
+1. ✅ **Registry Pattern** - Page factory uses registry mapping names to classes
+2. ✅ **Single Create Method** - One `createPage()` method, not many individual methods
+3. ✅ **Explicit Support** - Registry shows all available pages at a glance
+4. ✅ **Fixture-Based Injection** - Page objects via fixtures
+5. ✅ **No DSL in Fixtures** - Only page objects, not DSL instances
+6. ✅ **Centralized Creation** - Single source of truth for page instantiation
+7. ✅ **Easy to Extend** - Adding new pages is just adding to the registry
+
+## References
+
+- [Playwright Fixtures Documentation](https://playwright.dev/docs/test-fixtures)
+- [Factory Pattern](https://refactoring.guru/design-patterns/factory-method)

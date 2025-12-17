@@ -1,0 +1,311 @@
+---
+description: Project structure and file organization for Playwright test automation following all established rules
+globs: **/*
+alwaysApply: false
+---
+
+# Playwright Project Structure
+
+## Directory Structure
+
+Organize the project with clear separation between page objects, fixtures, DSL layers, and test cases:
+
+```
+project-root/
+├── fixtures/
+│   └── test-fixtures.ts           # Test fixtures only (matches glob: **/fixtures/**/*)
+├── infra/
+│   └── pages/                     # Page objects and factory (matches glob: **/pages/**/*)
+│       ├── page-factory.ts        # Page factory
+│       ├── base-page.ts           # Base page class
+│       ├── login-page.ts          # Page objects (matches glob: **/*page*.ts)
+│       ├── product-page.ts
+│       ├── cart-page.ts
+│       └── checkout-page.ts
+├── tests/                         # Test suites (matches glob: **/tests/**/*)
+│   ├── ecommerce/                 # Test suite folder (business-driven)
+│   │   ├── ecommerce-dsl.ts       # DSL for this suite (matches glob: **/*dsl*.ts)
+│   │   └── ecommerce.spec.ts      # Test cases (matches glob: **/*.spec.ts)
+│   ├── user-management/           # Another test suite (business-driven)
+│   │   ├── user-management-dsl.ts
+│   │   └── user-management.spec.ts
+│   ├── payments/                  # Another test suite (business-driven)
+│   │   ├── payments-dsl.ts
+│   │   └── payments.spec.ts
+│   └── whatwedeliver/            # Business objective, not page name
+│       ├── whatwedeliver-dsl.ts
+│       └── whatwedeliver.spec.ts
+└── e2e/                           # Alternative test location (matches glob: **/e2e/**/*)
+    └── ...
+```
+
+## File Naming Conventions
+
+File names must match the glob patterns in rules to ensure rules are applied correctly:
+
+### Page Objects
+
+Files must contain `page` in the name or be in `pages/` directory:
+
+```typescript
+// ✅ Good: Matches glob **/*page*.ts
+infra/pages/login-page.ts
+infra/pages/product-page.ts
+infra/pages/base-page.ts
+
+// ✅ Good: Matches glob **/pages/**/*
+infra/pages/components/header-page.ts
+
+// ❌ Bad: Doesn't match globs
+infra/pages/login.ts                // Missing "page" in name
+fixtures/pages/login-page.ts         // Wrong directory (should be infra/pages/)
+```
+
+### DSL Files
+
+Files must end with `-dsl.ts` in kebab-case:
+
+```typescript
+// ✅ Good: Matches glob **/*dsl*.ts
+tests/ecommerce/ecommerce-dsl.ts
+tests/user-management/user-management-dsl.ts
+tests/payments/payment-processing-dsl.ts  // Kebab-case
+
+// ❌ Bad: Doesn't match globs
+tests/ecommerce/ecommerce.ts              // Missing "-dsl" suffix
+tests/ecommerce/ecommerceDsl.ts          // Not kebab-case
+tests/helpers/ecommerce-dsl.ts            // Wrong directory (should be in suite folder)
+```
+
+### Fixture Files
+
+Files must contain `fixture` in the name or be in `fixtures/` directory:
+
+```typescript
+// ✅ Good: Matches glob **/*fixture*.ts
+fixtures/test-fixtures.ts
+
+// ✅ Good: Matches glob **/fixtures/**/*
+fixtures/test-fixtures.ts
+
+// ❌ Bad: Doesn't match globs
+fixtures/test-setup.ts              // Missing "fixture" in name
+infra/pages/page-factory.ts         // Factory is not a fixture file
+setup/test-fixtures.ts              // Wrong directory
+```
+
+### Test Files
+
+Files must end with `.spec.ts`:
+
+```typescript
+// ✅ Good: Matches glob **/*.spec.ts
+tests/ecommerce/ecommerce.spec.ts
+tests/user-management/user-management.spec.ts
+tests/ecommerce/purchase-flow.spec.ts
+
+// ✅ Good: Matches glob **/tests/**/*
+tests/ecommerce/purchase-flow.spec.ts
+
+// ✅ Good: Matches glob **/e2e/**/*
+e2e/ecommerce.spec.ts
+
+// ❌ Bad: Doesn't match globs
+tests/ecommerce/ecommerce.test.ts  // Wrong extension - must be .spec.ts
+tests/ecommerce/purchase-flow.ts   // Missing .spec extension
+test/ecommerce.spec.ts              // Wrong directory name
+```
+
+## Test Suite Organization
+
+Each test suite has its own folder containing DSL and test files. **Test suites must be named after business objectives, not page names:**
+
+```
+tests/
+└── ecommerce/                      # Test suite folder (business domain name)
+    ├── ecommerce-dsl.ts            # One DSL class per suite
+    ├── ecommerce.spec.ts           # Test cases for this suite
+    └── purchase-flow.spec.ts       # Additional test files for this suite
+```
+
+### Business-Driven Naming (Not Page-Driven)
+
+Test suites should be named after **business objectives** or **functional capabilities**, not after pages or UI components:
+
+```typescript
+// ✅ Good: Business-driven naming
+tests/whatwedeliver/                 # Business objective: "What We Deliver"
+    ├── whatwedeliver-dsl.ts
+    └── whatwedeliver.spec.ts
+
+tests/userregistration/              # Business objective: "User Registration"
+    ├── userregistration-dsl.ts
+    └── userregistration.spec.ts
+
+tests/productsearch/                 # Business objective: "Product Search"
+    ├── productsearch-dsl.ts
+    └── productsearch.spec.ts
+
+// ❌ Bad: Page-driven naming
+tests/homepage/                      # ❌ Named after a page
+tests/loginpage/                     # ❌ Named after a page
+tests/dashboard/                     # ❌ Named after a page
+
+// ✅ Good: Even if functionality is on homepage, name it by business objective
+tests/whatwedeliver/                 # Tests "What We Deliver" feature (even if on homepage)
+    └── whatwedeliver.spec.ts        # Can use HomepagePage internally
+```
+
+**Rationale:** Business objectives are stable and don't change when UI structure changes. A "What We Deliver" feature might move from homepage to a dedicated page, but the test suite name remains the same.
+
+### DSL File Location
+
+DSL file must be in the same folder as its test suite:
+
+```typescript
+// ✅ Good: DSL in suite folder
+tests/ecommerce/ecommerce-dsl.ts
+tests/ecommerce/ecommerce.spec.ts
+
+// ❌ Bad: DSL in wrong location
+tests/ecommerce-dsl.ts              // Not in suite folder
+dsl/ecommerce-dsl.ts                // Separate DSL folder
+```
+
+### DSL File Naming
+
+DSL file name should match the suite folder name:
+
+```typescript
+// ✅ Good: DSL name matches suite folder
+tests/ecommerce/ecommerce-dsl.ts
+tests/user-management/user-management-dsl.ts
+
+// ❌ Bad: Name mismatch
+tests/ecommerce/shopping-dsl.ts     // Doesn't match folder name
+```
+
+## Page Objects Organization
+
+All page objects and page factory belong in `infra/pages/` directory:
+
+```
+infra/
+└── pages/
+    ├── page-factory.ts             # Page factory
+    ├── base-page.ts                # Base page class
+    ├── components/                 # Component base classes (if reused)
+    │   ├── header-base.ts
+    │   └── modal-base.ts
+    ├── login-page.ts               # Concrete page implementations (kebab-case, ends with -page.ts)
+    ├── product-page.ts
+    ├── cart-page.ts
+    └── checkout-page.ts
+```
+
+### Page Object File Naming
+
+Page object files must end with `-page.ts` in kebab-case:
+
+```typescript
+// ✅ Good: Matches glob **/*page*.ts
+infra/pages/login-page.ts
+infra/pages/product-page.ts
+infra/pages/base-page.ts
+infra/pages/user-profile-page.ts    // Kebab-case
+
+// ❌ Bad: Doesn't match glob
+infra/pages/login.ts                // Missing "-page" suffix
+infra/pages/userProfilePage.ts      // Not kebab-case
+```
+
+## Fixtures Organization
+
+Fixtures folder at project root contains only test fixtures:
+
+```
+fixtures/
+└── test-fixtures.ts                # Playwright fixtures setup only
+```
+
+Page factory is in `infra/pages/` directory, not in fixtures.
+
+## Complete Example Structure
+
+```
+project-root/
+├── fixtures/
+│   └── test-fixtures.ts            # Test fixtures only
+├── infra/
+│   └── pages/
+│       ├── page-factory.ts         # Page factory
+│       ├── base-page.ts
+│       ├── login-page.ts
+│       ├── product-page.ts
+│       ├── cart-page.ts
+│       └── checkout-page.ts
+├── tests/
+│   ├── ecommerce/
+│   │   ├── ecommerce-dsl.ts        # DSL file (ends with -dsl.ts)
+│   │   ├── ecommerce.spec.ts       # Test file (ends with .spec.ts)
+│   │   └── purchase-flow.spec.ts
+│   ├── user-management/
+│   │   ├── user-management-dsl.ts
+│   │   └── user-management.spec.ts
+│   ├── payments/
+│   │   ├── payments-dsl.ts
+│   │   └── payments.spec.ts
+│   └── whatwedeliver/              # Business objective, not page name
+│       ├── whatwedeliver-dsl.ts
+│       └── whatwedeliver.spec.ts
+└── playwright.config.ts
+```
+
+## Import Paths
+
+Use relative imports that reflect the structure:
+
+```typescript
+// Test file importing DSL
+// tests/ecommerce/ecommerce.spec.ts
+import { test } from '../../fixtures/test-fixtures';
+import { ECommerceDSL } from './ecommerce-dsl';
+
+// DSL file importing page objects
+// tests/ecommerce/ecommerce-dsl.ts
+import { Page } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { LoginPage } from '../../infra/pages/login-page';
+import { ProductPage } from '../../infra/pages/product-page';
+
+// Page object importing base
+// infra/pages/login-page.ts
+import { BasePage } from './base-page';
+
+// Fixture file importing factory and pages
+// fixtures/test-fixtures.ts
+import { PageFactory } from '../infra/pages/page-factory';
+import { LoginPage } from '../infra/pages/login-page';
+```
+
+## Rules Summary
+
+1. ✅ **Fixtures at Root** - `fixtures/` folder at project root contains only `test-fixtures.ts`
+2. ✅ **Infra Folder** - Page objects and factory in `infra/pages/` directory
+3. ✅ **Tests Folder** - All test suites in `tests/` or `e2e/` directory
+4. ✅ **Suite Folders** - Each business domain has its own folder
+5. ✅ **DSL in Suite** - DSL file in same folder as test suite, ends with `-dsl.ts`
+6. ✅ **DSL Naming** - DSL file name matches suite folder name with `-dsl` suffix (kebab-case)
+7. ✅ **Page Objects** - All in `infra/pages/` directory, end with `-page.ts` (kebab-case)
+8. ✅ **Page Factory** - In `infra/pages/` directory
+9. ✅ **Test Files** - Must end with `.spec.ts` only
+10. ✅ **File Naming** - Must match glob patterns in rules
+
+## File Naming Checklist
+
+- [ ] Page objects: `*-page.ts` in kebab-case, located in `infra/pages/` directory
+- [ ] DSL files: `*-dsl.ts` in kebab-case, matches suite folder name
+- [ ] Fixture files: `test-fixtures.ts` in `fixtures/` directory at root
+- [ ] Test files: `*.spec.ts` only (no other extensions)
+- [ ] Page factory: `page-factory.ts` in `infra/pages/` directory
+- [ ] DSL name matches suite folder name

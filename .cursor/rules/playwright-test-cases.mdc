@@ -1,0 +1,296 @@
+---
+description: Best practices for writing Playwright test cases using only DSL classes, never page objects directly
+globs: **/*.spec.ts,**/*.spec.js,**/tests/**/*,**/e2e/**/*
+alwaysApply: false
+---
+
+# Playwright Test Cases
+
+## Core Principles
+
+Test cases must **only use DSL classes** and **never interact with page objects directly**. Tests represent business scenarios and end-to-end workflows, not page-specific operations.
+
+### Key Requirements
+
+1. **DSL Only** - Tests only call DSL class methods, never page object methods
+2. **Business Scenarios** - Tests represent business use cases, not technical operations
+3. **End-to-End Focus** - Tests can span multiple pages using DSL methods
+4. **No Page Objects** - Never import or use page objects directly in tests
+5. **Assertions in DSL** - All assertions belong in DSL layer, not in tests
+6. **No Playwright Expectations in Tests** - Tests never use `expect()` directly
+7. **One DSL Per Test Suite** - Each test suite uses one DSL class for all its flows
+
+## Test Structure
+
+### Using DSL Classes Only
+
+Tests instantiate DSL classes with page objects from fixtures and only call DSL methods:
+
+```typescript
+// ✅ Good: Test uses only DSL class
+import { test, expect } from './fixtures/test-fixtures';
+import { ECommerceDSL } from './dsl/ecommerce-dsl';
+
+test('customer can purchase product', async ({ 
+  page,
+  loginPage, 
+  productPage, 
+  cartPage, 
+  checkoutPage 
+}) => {
+  const ecommerceDSL = new ECommerceDSL(page, loginPage, productPage, cartPage, checkoutPage);
+  
+  await ecommerceDSL.completePurchaseFlow({
+    credentials: { email: 'customer@example.com', password: 'password123' },
+    productId: 'product-123',
+    shippingAddress: { /* ... */ }
+  });
+  
+  // DSL handles all assertions internally
+});
+
+// ❌ Bad: Test uses page objects directly
+test('customer can purchase product', async ({ loginPage, productPage }) => {
+  await loginPage.fillEmail('customer@example.com'); // ❌ Direct page object usage
+  await productPage.selectProduct('product-123'); // ❌ Should use DSL
+});
+```
+
+### Business-Focused Test Names
+
+Test names describe business scenarios, not technical operations:
+
+```typescript
+// ✅ Good: Business-focused test names
+test('customer can complete purchase with valid payment method', async ({ /* ... */ }) => {
+  // ...
+});
+
+test('guest user can browse products without authentication', async ({ /* ... */ }) => {
+  // ...
+});
+
+test('registered user can update profile information', async ({ /* ... */ }) => {
+  // ...
+});
+
+// ❌ Bad: Technical test names
+test('fill login form and submit', async ({ /* ... */ }) => { // ❌ Too technical
+  // ...
+});
+
+test('click product and add to cart', async ({ /* ... */ }) => { // ❌ Page-focused
+  // ...
+});
+```
+
+## End-to-End Tests
+
+Tests can use multiple DSL classes to create complete business workflows:
+
+```typescript
+// ✅ Good: End-to-end test using multiple DSL classes
+import { test, expect } from './fixtures/test-fixtures';
+import { ECommerceDSL } from './dsl/ecommerce-dsl';
+import { UserManagementDSL } from './dsl/user-management-dsl';
+
+test('registered customer can update profile and make purchase', async ({
+  page,
+  loginPage,
+  profilePage,
+  productPage,
+  cartPage
+}) => {
+  const userManagementDSL = new UserManagementDSL(page, loginPage, profilePage);
+  const ecommerceDSL = new ECommerceDSL(page, loginPage, productPage, cartPage);
+
+  // Business workflow combining multiple DSL classes
+  await userManagementDSL.loginAsCustomer({
+    email: 'customer@example.com',
+    password: 'password123'
+  });
+
+  await userManagementDSL.updateUserProfile({
+    firstName: 'John',
+    lastName: 'Doe'
+  });
+
+  await ecommerceDSL.addProductToCart('product-123');
+  
+  // DSL handles all assertions internally
+});
+```
+
+## Multiple DSL Usage
+
+Tests can instantiate and use multiple DSL classes:
+
+```typescript
+// ✅ Good: Test uses multiple DSL classes
+import { test, expect } from './fixtures/test-fixtures';
+import { ECommerceDSL } from './dsl/ecommerce-dsl';
+import { UserManagementDSL } from './dsl/user-management-dsl';
+import { PromotionsDSL } from './dsl/promotions-dsl';
+
+test('new user can create account and use discount', async ({
+  page,
+  registrationPage,
+  loginPage,
+  productPage,
+  cartPage
+}) => {
+  const userManagementDSL = new UserManagementDSL(page, registrationPage, loginPage);
+  const ecommerceDSL = new ECommerceDSL(page, loginPage, productPage, cartPage);
+  const promotionsDSL = new PromotionsDSL(page, cartPage);
+
+  // Combine DSL classes from different test suites
+  await userManagementDSL.createUserAccount({
+    email: 'newuser@example.com',
+    password: 'password123',
+    name: 'New User'
+  });
+
+  await ecommerceDSL.loginAsCustomer({
+    email: 'newuser@example.com',
+    password: 'password123'
+  });
+
+  await ecommerceDSL.addProductToCart('product-123');
+  await promotionsDSL.applyDiscountCode('WELCOME10');
+  
+  // DSL handles all assertions internally
+});
+```
+
+## Assertions in DSL Layer
+
+All assertions belong in the DSL layer, not in tests. Tests never use `expect()` directly:
+
+```typescript
+// ✅ Good: Assertions in DSL layer
+import { test } from './fixtures/test-fixtures';
+import { ECommerceDSL } from './dsl/ecommerce-dsl';
+
+test('customer sees dashboard after login', async ({ page, loginPage, homePage }) => {
+  const ecommerceDSL = new ECommerceDSL(page, loginPage, homePage);
+  
+  // DSL method handles assertions internally
+  await ecommerceDSL.loginAsCustomer({
+    email: 'customer@example.com',
+    password: 'password123'
+  });
+  
+  // No assertions in test - DSL handles everything
+});
+
+// DSL implementation with assertions
+export class ECommerceDSL {
+  @step
+  async loginAsCustomer(credentials: { email: string; password: string }) {
+    await this.loginPage.fillEmail(credentials.email);
+    await this.loginPage.fillPassword(credentials.password);
+    await this.loginPage.submit();
+    
+    // ✅ Assertions in DSL
+    await expect(this.page.getByTestId('dashboard')).toBeVisible();
+    await expect(this.page.getByTestId('welcome-message')).toContainText('Welcome');
+  }
+}
+
+// ❌ Bad: Assertions in test file
+test('customer sees dashboard', async ({ loginPage, homePage }) => {
+  const ecommerceDSL = new ECommerceDSL(loginPage, homePage);
+  await ecommerceDSL.loginAsCustomer({ /* ... */ });
+  
+  await expect(page.getByTestId('dashboard')).toBeVisible(); // ❌ No assertions in tests
+});
+```
+
+## Test Organization
+
+Organize tests by business domain, matching DSL organization:
+
+```typescript
+// ✅ Good: Tests organized by business domain
+// tests/ecommerce/purchase.spec.ts
+test.describe('E-commerce Purchase Flow', () => {
+  test('customer can purchase product', async ({ /* ... */ }) => {
+    // Uses ecommerce-dsl
+  });
+});
+
+// tests/user-management/profile.spec.ts
+test.describe('User Profile Management', () => {
+  test('user can update profile', async ({ /* ... */ }) => {
+    // Uses user-management-dsl
+  });
+});
+
+// ❌ Bad: Tests organized by pages
+// tests/login/login.spec.ts - ❌ Page-focused
+// tests/product/product.spec.ts - ❌ Page-focused
+```
+
+## Complete Example
+
+```typescript
+// tests/ecommerce/purchase-flow.spec.ts
+import { test } from '../../fixtures/test-fixtures';
+import { ECommerceDSL } from '../../dsl/ecommerce-dsl';
+
+test.describe('E-commerce Purchase Flow', () => {
+  test('registered customer can complete purchase', async ({
+    page,
+    loginPage,
+    productPage,
+    cartPage,
+    checkoutPage
+  }) => {
+    const ecommerceDSL = new ECommerceDSL(page, loginPage, productPage, cartPage, checkoutPage);
+    
+    await ecommerceDSL.completePurchaseFlow({
+      credentials: {
+        email: 'customer@example.com',
+        password: 'password123'
+      },
+      productId: 'product-123',
+      shippingAddress: {
+        street: '123 Main St',
+        city: 'New York',
+        zipCode: '10001'
+      }
+    });
+
+    // DSL handles all assertions internally
+  });
+
+  test('guest user can add product to cart', async ({
+    page,
+    productPage,
+    cartPage
+  }) => {
+    const ecommerceDSL = new ECommerceDSL(page, null, productPage, cartPage, null);
+    
+    await ecommerceDSL.addProductToCart('product-456');
+    
+    // DSL handles all assertions internally
+  });
+});
+```
+
+## Rules Summary
+
+1. ✅ **DSL Only** - Tests only use DSL class methods, never page objects directly
+2. ✅ **Business Scenarios** - Test names and logic represent business use cases
+3. ✅ **End-to-End Focus** - Tests can span multiple pages using DSL methods
+4. ✅ **No Page Objects** - Never import or call page object methods in tests
+5. ✅ **Assertions in DSL** - All assertions belong in DSL layer, not in tests
+6. ✅ **No Playwright Expectations in Tests** - Tests never use `expect()` directly
+7. ✅ **Multiple DSLs** - Tests can instantiate multiple DSL classes
+8. ✅ **Business Organization** - Tests organized by business domain, not pages
+
+## References
+
+- [Playwright Test Documentation](https://playwright.dev/docs/test-intro)
+- [Playwright Best Practices](https://playwright.dev/docs/best-practices)
+- [Web-First Assertions](https://playwright.dev/docs/best-practices#use-web-first-assertions)

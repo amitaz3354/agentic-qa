@@ -1,0 +1,675 @@
+---
+description: Best practices for creating Page Object Models in Playwright with proper locator strategies and separation of concerns
+globs: **/*page*.ts,**/*page*.js,**/pages/**/*,**/page-objects/**/*
+alwaysApply: false
+---
+
+# Playwright Page Object Model
+
+## Locator Strategy Priority
+
+Always prioritize locators in this exact order:
+
+1. **Test IDs** (`data-testid` or configured test ID attribute)
+2. **IDs** (`id` attribute)
+3. **Classes** (CSS classes)
+
+### Nested Search Pattern
+
+Prefer nested locators that search within a container before using broader selectors:
+
+```typescript
+// ✅ Good: Nested search within test ID container
+const submitButton = page
+  .getByTestId('login-form')
+  .getByRole('button', { name: 'Submit' });
+
+// ✅ Good: Search inside class container
+const productCard = page
+  .locator('.product-list')
+  .getByTestId('product-card');
+
+// ❌ Bad: Plain getByText without context
+const button = page.getByText('Submit');
+
+// ❌ Bad: Plain getByRole without container context
+const button = page.getByRole('button', { name: 'Submit' });
+```
+
+### Avoid Text and Role Locators
+
+Only use `getByText()` and `getByRole()` when:
+- No test ID, ID, or class is available
+- You need to search within a specific container (nested)
+- The element is truly unique and stable
+
+```typescript
+// ✅ Good: Nested role search within container
+const menuItem = page
+  .getByTestId('navigation-menu')
+  .getByRole('menuitem', { name: 'Settings' });
+
+// ❌ Bad: Standalone text locator
+const menuItem = page.getByText('Settings');
+```
+
+## Page Object Structure
+
+### Locator Declaration and Initialization
+
+Locators must be declared as **private properties before the constructor** and **initialized in the constructor**:
+
+```typescript
+// ✅ Good: Locators declared before constructor and initialized in constructor
+import { Page, Locator } from '@playwright/test';
+
+class LoginPage extends BasePage {
+  private discoverWhatWeDeliverLink: Locator;
+  private emailInput: Locator;
+  private passwordInput: Locator;
+  private submitButton: Locator;
+
+  constructor(page: Page) {
+    super(page);
+    
+    // Initialize locators in constructor
+    this.discoverWhatWeDeliverLink = this.page.getByRole('link', { name: 'Discover What We Deliver' });
+    this.emailInput = this.page.getByTestId('email-input');
+    this.passwordInput = this.page.getByTestId('password-input');
+    this.submitButton = this.page
+      .getByTestId('login-form')
+      .getByTestId('submit-button');
+  }
+
+  async fillEmail(email: string) {
+    await this.fill(this.emailInput, email);
+  }
+
+  async clickSubmit() {
+    await this.click(this.submitButton);
+  }
+}
+
+// ❌ Bad: Locators as getters
+class LoginPage {
+  constructor(page: Page) {
+    super(page);
+  }
+
+  private get emailInput() { // ❌ Should be property initialized in constructor
+    return this.page.getByTestId('email-input');
+  }
+}
+
+// ❌ Bad: Locators declared after constructor
+class LoginPage {
+  constructor(page: Page) {
+    super(page);
+  }
+
+  private emailInput: Locator; // ❌ Should be before constructor
+}
+```
+
+### Exposing Locators for DSL Usage
+
+Locators should be **public or protected** (not private) so they can be accessed by DSL classes for assertions. DSL should use page object locators instead of direct `page.getByRole()` or `page.getByTestId()` calls.
+
+```typescript
+// ✅ Good: Public locators accessible to DSL
+class HomepagePage extends BasePage {
+  discoverWhatWeDeliverLink: Locator;  // Public for DSL access
+  threeWaysTitle: Locator;
+  customHermeticEngineeringHeading: Locator;
+
+  constructor(page: Page) {
+    super(page);
+    // Use base helper methods
+    this.discoverWhatWeDeliverLink = this.getLink('Discover What We Deliver');
+    this.threeWaysTitle = this.getHeading('Three Ways We Deliver Mission-Critical Hermetic Solutions');
+    this.customHermeticEngineeringHeading = this.getHeading('Custom Hermetic Engineering');
+  }
+}
+
+// ✅ Good: DSL uses page object locators
+class HomepageDSL {
+  constructor(private page: Page, private homepagePage: HomepagePage) {}
+
+  @step
+  async verifyWhatWeDeliverSection() {
+    await expect(this.homepagePage.threeWaysTitle).toBeVisible();  // ✅ Uses page object locator
+    await expect(this.homepagePage.customHermeticEngineeringHeading).toBeVisible();
+  }
+}
+
+// ❌ Bad: DSL uses direct page calls
+class HomepageDSL {
+  @step
+  async verifyWhatWeDeliverSection() {
+    await expect(this.page.getByRole('heading', { name: 'Three Ways We Deliver Mission-Critical Hermetic Solutions' })).toBeVisible();  // ❌ Direct page call
+  }
+}
+```
+
+### Dynamic Locators with Arrow Functions
+
+For locators that require dynamic values (e.g., product IDs, user names), use **arrow function properties**:
+
+```typescript
+// ✅ Good: Arrow function for dynamic locators
+class ProductPage extends BasePage {
+  productCard: (productId: string) => Locator;
+  productPrice: (productId: string) => Locator;
+
+  constructor(page: Page) {
+    super(page);
+    
+    // Arrow functions for dynamic locators
+    this.productCard = (productId: string) => this.page.getByTestId(`product-card-${productId}`);
+    this.productPrice = (productId: string) => this.productCard(productId).getByTestId('price');
+  }
+
+  async clickProduct(productId: string) {
+    await this.click(this.productCard(productId));
+  }
+}
+
+// ✅ Good: DSL uses dynamic locators
+class ProductDSL {
+  constructor(private page: Page, private productPage: ProductPage) {}
+
+  @step
+  async verifyProductPrice(productId: string, expectedPrice: string) {
+    await expect(this.productPage.productPrice(productId)).toHaveText(expectedPrice);
+  }
+}
+```
+
+### Extract Repeated Locator Patterns to Base Classes
+
+When you notice repeated locator patterns (e.g., multiple `getByRole('heading', ...)` or `getByRole('link', ...)` calls), extract them into helper methods in the base class or component base class:
+
+```typescript
+// ✅ Good: Base class with helper methods for common patterns
+class BasePage {
+  constructor(protected page: Page) {}
+
+  // Extract repeated getByRole patterns
+  protected getHeading(name: string): Locator {
+    return this.page.getByRole('heading', { name });
+  }
+
+  protected getLink(name: string): Locator {
+    return this.page.getByRole('link', { name });
+  }
+
+  protected getButton(name: string): Locator {
+    return this.page.getByRole('button', { name });
+  }
+}
+
+// ✅ Good: Use base helper methods instead of duplicating getByRole
+class HomepagePage extends BasePage {
+  discoverWhatWeDeliverLink: Locator;
+  threeWaysTitle: Locator;
+  customHermeticEngineeringHeading: Locator;
+
+  constructor(page: Page) {
+    super(page);
+    
+    // Use base helper methods - no duplication
+    this.discoverWhatWeDeliverLink = this.getLink('Discover What We Deliver');
+    this.threeWaysTitle = this.getHeading('Three Ways We Deliver Mission-Critical Hermetic Solutions');
+    this.customHermeticEngineeringHeading = this.getHeading('Custom Hermetic Engineering');
+  }
+}
+
+// ❌ Bad: Duplicating getByRole calls
+class HomepagePage extends BasePage {
+  constructor(page: Page) {
+    super(page);
+    // ❌ Repeated pattern - should extract to base
+    this.discoverWhatWeDeliverLink = this.page.getByRole('link', { name: 'Discover What We Deliver' });
+    this.threeWaysTitle = this.page.getByRole('heading', { name: 'Three Ways We Deliver...' });
+    this.customHeading = this.page.getByRole('heading', { name: 'Custom Hermetic Engineering' });
+  }
+}
+```
+
+**When to extract:**
+- Extract to `BasePage` if the pattern is used across multiple unrelated pages
+- Extract to a component base class (e.g., `HeaderBase`, `ModalBase`) if the pattern is specific to that component and reused across pages that use that component
+
+### No Assertions in Page Objects
+
+Page objects should only contain **functional UI operations**. All assertions belong in test files.
+
+```typescript
+// ✅ Good: Pure UI operation
+class LoginPage {
+  async fillEmail(email: string) {
+    await this.page.getByTestId('email-input').fill(email);
+  }
+
+  async clickSubmit() {
+    await this.page.getByTestId('submit-button').click();
+  }
+}
+
+// ❌ Bad: Assertions in page object
+class LoginPage {
+  async fillEmail(email: string) {
+    await this.page.getByTestId('email-input').fill(email);
+    await expect(this.page.getByTestId('email-input')).toHaveValue(email); // ❌
+  }
+}
+```
+
+### No Step Annotations
+
+Do not use step annotations (like `@step` or `test.step()`) in page object methods. Keep them pure and simple.
+
+```typescript
+// ✅ Good: Simple method without annotations
+async navigateToDashboard() {
+  await this.page.getByTestId('dashboard-link').click();
+}
+
+// ❌ Bad: Step annotation in page object
+async navigateToDashboard() {
+  await test.step('Navigate to dashboard', async () => { // ❌
+    await this.page.getByTestId('dashboard-link').click();
+  });
+}
+```
+
+### Only Functional UI Operations
+
+Page objects should only contain methods that interact with the UI:
+
+```typescript
+// ✅ Good: UI interaction methods
+class ProductPage {
+  async selectProduct(productId: string) {
+    await this.page
+      .getByTestId('product-list')
+      .getByTestId(`product-${productId}`)
+      .click();
+  }
+
+  async addToCart() {
+    await this.page.getByTestId('add-to-cart-button').click();
+  }
+}
+
+// ❌ Bad: Business logic or data manipulation
+class ProductPage {
+  async calculateTotal() { // ❌ Not a UI operation
+    // Business logic doesn't belong here
+  }
+}
+```
+
+## Avoid Manual Waits
+
+### No Polling or Explicit Waits
+
+Playwright's auto-waiting handles most scenarios. Avoid manual waits unless absolutely necessary.
+
+```typescript
+// ✅ Good: Rely on auto-waiting
+async clickSubmit() {
+  await this.page.getByTestId('submit-button').click(); // Auto-waits for element
+}
+
+// ❌ Bad: Manual timeout waits
+async clickSubmit() {
+  await this.page.waitForTimeout(2000); // ❌
+  await this.page.getByTestId('submit-button').click();
+}
+
+// ❌ Bad: Network waiting
+async clickSubmit() {
+  await this.page.waitForLoadState('networkidle'); // ❌ Usually unnecessary
+  await this.page.getByTestId('submit-button').click();
+}
+```
+
+### Use Web-First Assertions
+
+In test files, use Playwright's web-first assertions which automatically wait and retry. Never use manual assertions that don't await.
+
+```typescript
+// ✅ Good: Web-first assertion in test file
+test('should display success message', async ({ page }) => {
+  const loginPage = new LoginPage(page);
+  await loginPage.submitForm();
+  await expect(page.getByTestId('success-message')).toBeVisible(); // Auto-waits
+});
+
+// ❌ Bad: Manual assertion without waiting
+test('should display success message', async ({ page }) => {
+  const loginPage = new LoginPage(page);
+  await loginPage.submitForm();
+  expect(await page.getByTestId('success-message').isVisible()).toBe(true); // ❌ No retry
+});
+```
+
+## Hierarchical Structure
+
+Always use a hierarchical inheritance structure instead of flat classes. This pattern provides better code reuse and maintainability.
+
+**Important**: Only create component base classes when you identify **actual reuse** - when the same component (header, modal, section, etc.) appears across multiple pages you need to test. Don't create over-generic component bases "just in case".
+
+### Structure Hierarchy
+
+1. **BasePage** - Implements common operations (bot pattern with standard implementations for clicks, waits, etc.)
+2. **Component Base Classes** - Inherit from BasePage **only when components are reused** (HeaderBase, ModalBase, etc.)
+3. **Concrete Page Implementations** - Inherit from component bases (if reused) or BasePage (if not)
+
+### Base Page Pattern
+
+Create a base page class that implements standard UI operations following the bot pattern:
+
+```typescript
+// ✅ Good: Base page with common operations
+class BasePage {
+  constructor(protected page: Page) {}
+
+  // Standard click implementation
+  protected async click(locator: Locator) {
+    await locator.click();
+  }
+
+  // Standard fill implementation
+  protected async fill(locator: Locator, text: string) {
+    await locator.fill(text);
+  }
+
+  // Standard wait for element
+  protected async waitForElement(locator: Locator) {
+    await locator.waitFor();
+  }
+
+  // Standard navigation
+  async navigateTo(url: string) {
+    await this.page.goto(url);
+  }
+}
+```
+
+### Component Base Classes
+
+**Only create component base classes when you identify actual reuse** - when the same component (header, modal, section, etc.) appears across multiple pages. Don't create over-generic component bases "just in case".
+
+#### When to Create Component Bases
+
+Create a component base class only when:
+- The same component appears on **multiple pages** you need to test
+- You see **duplication** of component interactions across different page classes
+- The component has **consistent behavior** across pages
+
+```typescript
+// ✅ Good: Header appears on LoginPage, ProductPage, DashboardPage
+// Create HeaderBase because it's reused
+class HeaderBase extends BasePage {
+  protected get headerContainer() {
+    return this.page.getByTestId('header');
+  }
+
+  async clickLogo() {
+    await this.click(this.headerContainer.getByTestId('logo'));
+  }
+
+  async navigateToMenuItem(menuItem: string) {
+    await this.click(
+      this.headerContainer
+        .getByTestId('navigation-menu')
+        .getByTestId(`menu-item-${menuItem}`)
+    );
+  }
+}
+
+// ✅ Good: Modal appears on ProductPage, CartPage, CheckoutPage
+// Create ModalBase because it's reused
+class ModalBase extends BasePage {
+  protected get modalContainer() {
+    return this.page.getByTestId('modal');
+  }
+
+  async close() {
+    await this.click(this.modalContainer.getByTestId('close-button'));
+  }
+
+  async confirm() {
+    await this.click(this.modalContainer.getByTestId('confirm-button'));
+  }
+}
+```
+
+#### When NOT to Create Component Bases
+
+Don't create component bases if:
+- The component only appears on **one page**
+- You're creating it "just in case" it might be reused later
+- The component behavior differs significantly between pages
+
+```typescript
+// ❌ Bad: Creating ModalBase when modal only appears on one page
+class ModalBase extends BasePage {
+  // Only used in ProductPage - don't create base class
+}
+
+// ✅ Good: Keep it in the concrete page if it's only used once
+class ProductPage extends HeaderBase {
+  private confirmationModal: Locator;
+
+  constructor(page: Page) {
+    super(page);
+    this.confirmationModal = this.page.getByTestId('confirmation-modal');
+  }
+
+  async closeModal() {
+    await this.click(this.confirmationModal.getByTestId('close-button'));
+  }
+}
+```
+
+### Concrete Page Implementations
+
+Concrete pages inherit from component bases **only when those components are actually reused**, otherwise inherit directly from BasePage:
+
+```typescript
+// ✅ Good: LoginPage inherits from HeaderBase because header is reused across pages
+class LoginPage extends HeaderBase {
+  private emailInput: Locator;
+  private passwordInput: Locator;
+  private submitButton: Locator;
+
+  constructor(page: Page) {
+    super(page);
+    this.emailInput = this.page.getByTestId('email-input');
+    this.passwordInput = this.page.getByTestId('password-input');
+    this.submitButton = this.page
+      .getByTestId('login-form')
+      .getByTestId('submit-button');
+  }
+
+  async fillEmail(email: string) {
+    await this.fill(this.emailInput, email);
+  }
+
+  async fillPassword(password: string) {
+    await this.fill(this.passwordInput, password);
+  }
+
+  async submit() {
+    await this.click(this.submitButton);
+  }
+}
+
+// ✅ Good: ProductPage inherits from HeaderBase (reused) and uses ModalBase (reused)
+class ProductPage extends HeaderBase {
+  private addToCartButton: Locator;
+
+  constructor(page: Page) {
+    super(page);
+    this.addToCartButton = this.page.getByTestId('add-to-cart-button');
+  }
+
+  async addToCart() {
+    await this.click(this.addToCartButton);
+  }
+
+  // Modal is reused across pages, so use ModalBase
+  get confirmationModal(): ModalBase {
+    return new ModalBase(this.page);
+  }
+}
+
+// ✅ Good: Page with unique component - inherit directly from BasePage
+class SettingsPage extends BasePage {
+  private sidebar: Locator;
+
+  constructor(page: Page) {
+    super(page);
+    this.sidebar = this.page.getByTestId('settings-sidebar');
+  }
+
+  async selectSetting(settingName: string) {
+    await this.click(
+      this.sidebar.getByTestId(`setting-${settingName}`)
+    );
+  }
+}
+```
+
+### Identifying Reuse Patterns
+
+When you notice the same component interactions appearing in multiple page classes, that's the signal to extract a component base:
+
+```typescript
+// ❌ Bad: Duplication detected - header logic in multiple pages
+class LoginPage extends BasePage {
+  async clickHeaderLogo() {
+    await this.click(this.page.getByTestId('header').getByTestId('logo'));
+  }
+}
+
+class ProductPage extends BasePage {
+  async clickHeaderLogo() {
+    await this.click(this.page.getByTestId('header').getByTestId('logo'));
+  }
+}
+
+// ✅ Good: Extract to HeaderBase after identifying reuse
+class HeaderBase extends BasePage {
+  async clickLogo() {
+    await this.click(this.page.getByTestId('header').getByTestId('logo'));
+  }
+}
+
+class LoginPage extends HeaderBase {}
+class ProductPage extends HeaderBase {}
+```
+
+### ❌ Bad: Flat Structure
+
+Avoid creating flat classes without inheritance:
+
+```typescript
+// ❌ Bad: Flat structure without base classes
+class LoginPage {
+  constructor(private page: Page) {}
+  // Duplicated click, fill, wait methods in every class
+}
+
+class ProductPage {
+  constructor(private page: Page) {}
+  // Same duplicated methods again
+}
+```
+
+## Complete Example
+
+```typescript
+// ✅ Good: Complete hierarchical structure
+// Base page with standard operations
+class BasePage {
+  constructor(protected page: Page) {}
+
+  protected async click(locator: Locator) {
+    await locator.click();
+  }
+
+  protected async fill(locator: Locator, text: string) {
+    await locator.fill(text);
+  }
+
+  async navigateTo(url: string) {
+    await this.page.goto(url);
+  }
+}
+
+// Component base for headers
+class HeaderBase extends BasePage {
+  protected headerContainer: Locator;
+
+  constructor(page: Page) {
+    super(page);
+    this.headerContainer = this.page.getByTestId('header');
+  }
+
+  async clickLogo() {
+    await this.click(this.headerContainer.getByTestId('logo'));
+  }
+}
+
+// Concrete page implementation
+class LoginPage extends HeaderBase {
+  private emailInput: Locator;
+  private passwordInput: Locator;
+  private submitButton: Locator;
+
+  constructor(page: Page) {
+    super(page);
+    
+    // Initialize locators in constructor
+    this.emailInput = this.page.getByTestId('email-input');
+    this.passwordInput = this.page.getByTestId('password-input');
+    this.submitButton = this.page
+      .getByTestId('login-form')
+      .getByTestId('submit-button');
+  }
+
+  async fillEmail(email: string) {
+    await this.fill(this.emailInput, email);
+  }
+
+  async fillPassword(password: string) {
+    await this.fill(this.passwordInput, password);
+  }
+
+  async submit() {
+    await this.click(this.submitButton);
+  }
+}
+
+// Test file with assertions
+test('user can login', async ({ page }) => {
+  const loginPage = new LoginPage(page);
+  await loginPage.navigateTo('/login');
+  await loginPage.fillEmail('user@example.com');
+  await loginPage.fillPassword('password123');
+  await loginPage.submit();
+  
+  // Assertions in test, not page object
+  await expect(page.getByTestId('dashboard')).toBeVisible();
+});
+```
+
+## References
+
+- [Playwright Best Practices - Web-First Assertions](https://playwright.dev/docs/best-practices#use-web-first-assertions)
+- [Playwright Locators Documentation](https://playwright.dev/docs/locators)
+- [Page Object Model Pattern](https://playwright.dev/docs/pom)
